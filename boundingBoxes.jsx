@@ -2,43 +2,43 @@
  * boundingBoxes.jsx
  * After Effects 2026 — ExtendScript
  *
- * Генерирует для всех видимых слоёв активной композиции:
- *   - живые ориентированные bounding box (shape + expression)
- *   - запечённые motion path по ключам Position (bezier + маркеры в ключах)
+ * Generates for all visible layers in the active composition:
+ *   - live oriented bounding boxes (shape + expression)
+ *   - baked motion paths from Position keyframes (bezier + markers at keyframes)
  *
- * Поддерживает: Text, Shape, Footage (image/video), Precomp, Null.
- * Игнорирует: Audio, Camera, Light, Adjustment.
+ * Supports: Text, Shape, Footage (image/video), Precomp, Null.
+ * Ignores: Audio, Camera, Light, Adjustment.
  *
- * Ограничения:
- *   - Обрабатывает только слои верхнего уровня активной композиции (не внутри precomp).
- *   - Для 3D-слоёв toComp даёт 2D-проекцию через активную камеру.
- *   - Траектория запекается один раз; при правке анимации перезапустите скрипт.
- *   - При дублирующихся именах слоёв expression ссылается на верхний слой с таким именем.
- *   - Bounding boxes и траектории создаются в одной precomp внутри активной композиции.
+ * Limitations:
+ *   - Processes only top-level layers in the active composition (not inside precomps).
+ *   - For 3D layers, toComp returns a 2D projection through the active camera.
+ *   - Trajectories are baked once; re-run the script after editing animation.
+ *   - When layer names are duplicated, expressions reference the topmost layer with that name.
+ *   - Bounding boxes and trajectories are created in a single precomp inside the active composition.
  */
 
 (function () {
-    // ─── Настройки ───────────────────────────────────────────────────────────
-    var BBOX_STROKE_WIDTH = 1;   // толщина обводки bounding box (px)
-    var TRAJ_STROKE_WIDTH = 1;   // толщина обводки траекторий (px)
-    var BBOX_IN_PRECOMP = true;  // bbox и траектории в одной precomp
+    // ─── Settings ────────────────────────────────────────────────────────────
+    var BBOX_STROKE_WIDTH = 1;   // bounding box stroke width (px)
+    var TRAJ_STROKE_WIDTH = 1;   // trajectory stroke width (px)
+    var BBOX_IN_PRECOMP = true;  // bbox and trajectories in a single precomp
     var BBOX_PRECOMP_PREFIX = "BBox Overlay";
-    var CROSS_HALF_SIZE = 10; // половина длины луча креста '+' (px)
-    var HANDLE_HALF_SIZE = 4; // половина стороны handle-квадрата на bbox (px)
-    var TRAJ_KEYFRAME_SQUARE_HALF = 4; // половина стороны квадрата в ключе motion path (px)
+    var CROSS_HALF_SIZE = 10; // half length of the '+' cross arm (px)
+    var HANDLE_HALF_SIZE = 4; // half side length of bbox handle squares (px)
+    var TRAJ_KEYFRAME_SQUARE_HALF = 4; // half side length of motion path keyframe squares (px)
     var BOX_PREFIX = "BBox: ";
     var TRAJ_PREFIX = "Traj: ";
     var GROUP_PREFIX = "BBox Group";
     var GENERATE_TRAJECTORY = true;
     var GROUP_UNDER_NULL = false;
     var USE_LABEL_COLORS = true;
-    var FALLBACK_COLOR = [1, 0.2, 0.2]; // красный, хорошо виден на любом фоне
+    var FALLBACK_COLOR = [1, 0.2, 0.2]; // red, visible on any background
     var NULL_DEFAULT_LEFT = -50;
     var NULL_DEFAULT_TOP = -50;
     var NULL_DEFAULT_WIDTH = 100;
     var NULL_DEFAULT_HEIGHT = 100;
 
-    // Стандартные цвета меток AE (RGB 0–1), индексы 1–16
+    // Standard AE label colors (RGB 0–1), indices 1–16
     var LABEL_COLORS = [
         null,
         [0.8, 0.8, 0.8],
@@ -59,12 +59,12 @@
         [0.15, 0.15, 0.15]
     ];
 
-    // ─── Точка входа ─────────────────────────────────────────────────────────
+    // ─── Entry point ─────────────────────────────────────────────────────────
     function main() {
         var comp = app.project.activeItem;
 
         if (!(comp instanceof CompItem)) {
-            alert("Откройте композицию и запустите скрипт снова.");
+            alert("Open a composition and run the script again.");
             return;
         }
 
@@ -81,11 +81,11 @@
 
             if (targets.length === 0) {
                 alert(
-                    "Нет подходящих слоёв.\n\n" +
-                    "Всего в композиции: " + stats.total + "\n" +
-                    "Отключены: " + stats.disabled + "\n" +
-                    "Без видео (audio/adjustment): " + stats.noVideo + "\n" +
-                    "Guide / служебные: " + stats.guideOrGenerated
+                    "No suitable layers found.\n\n" +
+                    "Total in composition: " + stats.total + "\n" +
+                    "Disabled: " + stats.disabled + "\n" +
+                    "No video (audio/adjustment): " + stats.noVideo + "\n" +
+                    "Guide / generated: " + stats.guideOrGenerated
                 );
                 app.endUndoGroup();
                 return;
@@ -176,30 +176,30 @@
             moveLayersToTop(comp, createdLayers);
 
             alert(
-                "Готово.\n\n" +
-                "Слоёв в композиции: " + stats.total + "\n" +
-                "Подходящих целей: " + targets.length + "\n" +
-                "Создано overlay-слоёв: " + createdLayers.length + "\n" +
+                "Done.\n\n" +
+                "Layers in composition: " + stats.total + "\n" +
+                "Suitable targets: " + targets.length + "\n" +
+                "Overlay layers created: " + createdLayers.length + "\n" +
                 "  — bounding boxes: " + bboxLayerCount +
-                (BBOX_IN_PRECOMP ? " (в precomp)" : "") + "\n" +
-                "  — траектории: " + trajLayerCount +
-                (BBOX_IN_PRECOMP ? " (в precomp)" : "") + "\n" +
-                "Пропущено: " + skipped + "\n\n" +
-                "Не обработано: " + (stats.total - targets.length) + " слоёв\n" +
-                "  — отключены: " + stats.disabled + "\n" +
+                (BBOX_IN_PRECOMP ? " (in precomp)" : "") + "\n" +
+                "  — trajectories: " + trajLayerCount +
+                (BBOX_IN_PRECOMP ? " (in precomp)" : "") + "\n" +
+                "Skipped: " + skipped + "\n\n" +
+                "Not processed: " + (stats.total - targets.length) + " layers\n" +
+                "  — disabled: " + stats.disabled + "\n" +
                 "  — audio/adjustment: " + stats.noVideo + "\n" +
                 "  — camera/light/guide: " + stats.notAV + "\n" +
-                "  — служебные BBox: " + stats.guideOrGenerated +
-                (errors.length > 0 ? "\n\nОшибки (" + errors.length + "):\n" + errors.slice(0, 5).join("\n") : "")
+                "  — generated BBox: " + stats.guideOrGenerated +
+                (errors.length > 0 ? "\n\nErrors (" + errors.length + "):\n" + errors.slice(0, 5).join("\n") : "")
             );
         } catch (e) {
-            alert("Ошибка: " + e.toString() + (e.line ? " (строка " + e.line + ")" : ""));
+            alert("Error: " + e.toString() + (e.line ? " (line " + e.line + ")" : ""));
         }
 
         app.endUndoGroup();
     }
 
-    // ─── Фильтрация и очистка ────────────────────────────────────────────────
+    // ─── Filtering and cleanup ───────────────────────────────────────────────
     function safeGetLayer(comp, index) {
         try {
             if (!comp || index < 1 || index > comp.numLayers) {
@@ -414,7 +414,7 @@
         return null;
     }
 
-    // ─── Цвета ───────────────────────────────────────────────────────────────
+    // ─── Colors ──────────────────────────────────────────────────────────────
     function captureSourceLayerInfo(sourceLayer, comp) {
         var motionPath = { vertices: [], inTangents: [], outTangents: [], keyframePoints: [] };
         if (GENERATE_TRAJECTORY) {
@@ -476,7 +476,7 @@
         return FALLBACK_COLOR;
     }
 
-    // ─── Bounding Box (живой, expression) ────────────────────────────────────
+    // ─── Bounding Box (live, expression) ─────────────────────────────────────
     function createBoundingBox(comp, info, color, uniqueSuffix, sourceCompName, overlayLayerName) {
         var layerName = BOX_PREFIX + info.name + uniqueSuffix;
         var setup = createBBoxShapeLayer(comp, layerName, info.label, color);
@@ -645,7 +645,7 @@
         return result;
     }
 
-    // ─── Траектория (motion path по ключам Position) ───────────────────────────
+    // ─── Trajectory (motion path from Position keyframes) ────────────────────
     function createTrajectory(comp, info, color, uniqueSuffix) {
         var motionPath = info.motionPath;
         var markerCount = motionPath.keyframePoints.length;
@@ -983,14 +983,14 @@
         return [x, y];
     }
 
-    // ─── Вспомогательные ─────────────────────────────────────────────────────
+    // ─── Utilities ───────────────────────────────────────────────────────────
     function ensureJavaScriptExpressionEngine() {
         try {
             if (app.project.expressionEngine !== "javascript-1.0") {
                 app.project.expressionEngine = "javascript-1.0";
             }
         } catch (e) {
-            // старые версии AE — продолжаем с текущим движком
+            // older AE versions — continue with the current engine
         }
     }
 
