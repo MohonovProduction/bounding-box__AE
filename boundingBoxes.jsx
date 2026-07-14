@@ -17,7 +17,7 @@
  *   - Bounding boxes and trajectories are created in a single precomp inside the active composition.
  */
 
-(function () {
+(function (thisObj) {
     // ─── Settings ────────────────────────────────────────────────────────────
     var BBOX_STROKE_WIDTH = 1;   // bounding box stroke width (px)
     var TRAJ_STROKE_WIDTH = 1;   // trajectory stroke width (px)
@@ -32,6 +32,14 @@
     var GENERATE_TRAJECTORY = true;
     var GROUP_UNDER_NULL = false;
     var USE_LABEL_COLORS = true;
+    var SHOW_HANDLES = true;
+    var DEBUG_MODE = false;
+    var DEFAULT_LAYER_MODE = "all"; // all | selected
+    var INCLUDE_TEXT = true;
+    var INCLUDE_SHAPE = true;
+    var INCLUDE_FOOTAGE = true;
+    var INCLUDE_PRECOMP = true;
+    var INCLUDE_NULL = true;
     var FALLBACK_COLOR = [1, 0.2, 0.2]; // red, visible on any background
     var NULL_DEFAULT_LEFT = -50;
     var NULL_DEFAULT_TOP = -50;
@@ -60,7 +68,24 @@
     ];
 
     // ─── Entry point ─────────────────────────────────────────────────────────
-    function main() {
+    function defaultOptions() {
+        return {
+            layerMode: DEFAULT_LAYER_MODE,
+            generateTrajectory: GENERATE_TRAJECTORY,
+            useLabelColors: USE_LABEL_COLORS,
+            showHandles: SHOW_HANDLES,
+            debugMode: DEBUG_MODE,
+            includeText: INCLUDE_TEXT,
+            includeShape: INCLUDE_SHAPE,
+            includeFootage: INCLUDE_FOOTAGE,
+            includePrecomp: INCLUDE_PRECOMP,
+            includeNull: INCLUDE_NULL
+        };
+    }
+
+    function main(options) {
+        options = mergeOptions(defaultOptions(), options || {});
+
         var comp = app.project.activeItem;
 
         if (!(comp instanceof CompItem)) {
@@ -68,14 +93,17 @@
             return;
         }
 
+        var debug = createDebugLog(options.debugMode);
+
         app.beginUndoGroup("Bounding Boxes");
 
         try {
             ensureJavaScriptExpressionEngine();
 
             removeGeneratedLayers(comp);
+            debug.log("Cleaned generated layers in " + comp.name);
 
-            var collected = collectTargetLayers(comp);
+            var collected = collectTargetLayers(comp, options, debug);
             var targets = collected.targets;
             var stats = collected.stats;
 
@@ -84,7 +112,8 @@
                     "No suitable layers found.\n\n" +
                     "Total in composition: " + stats.total + "\n" +
                     "Disabled: " + stats.disabled + "\n" +
-                    "No video (audio/adjustment): " + stats.noVideo + "\n" +
+                    "No video / audio only: " + stats.noVideo + "\n" +
+                    "Adjustment: " + stats.adjustment + "\n" +
                     "Guide / generated: " + stats.guideOrGenerated
                 );
                 app.endUndoGroup();
@@ -97,6 +126,27 @@
             var trajLayerCount = 0;
             var skipped = 0;
             var errors = [];
+            var captured = [];
+            var ci;
+
+            for (ci = 0; ci < targets.length; ci++) {
+                var src = targets[ci].layer;
+                if (!src) {
+                    skipped++;
+                    continue;
+                }
+                try {
+                    captured.push({
+                        info: captureSourceLayerInfo(src, comp, options),
+                        color: colorForLayer(src, options),
+                        suffix: " #" + targets[ci].index
+                    });
+                    debug.log("Captured layer #" + targets[ci].index + ": " + targets[ci].name);
+                } catch (captureErr) {
+                    skipped++;
+                    errors.push(targets[ci].name + " [capture]: " + captureErr.toString());
+                }
+            }
 
             var overlayTarget = { comp: comp, sourceCompName: null, overlayLayerName: null, precompLayer: null };
             if (BBOX_IN_PRECOMP) {
@@ -106,27 +156,7 @@
                 overlayTarget.overlayLayerName = bboxPrecompNameFor(comp);
                 overlayTarget.precompLayer = bboxSetup.layer;
                 createdLayers.push(bboxSetup.layer);
-            }
-
-            var captured = [];
-            var ci;
-
-            for (ci = 0; ci < targets.length; ci++) {
-                var src = safeGetLayer(comp, targets[ci].index);
-                if (!src) {
-                    skipped++;
-                    continue;
-                }
-                try {
-                    captured.push({
-                        info: captureSourceLayerInfo(src, comp),
-                        color: colorForLayer(src),
-                        suffix: " #" + targets[ci].index
-                    });
-                } catch (captureErr) {
-                    skipped++;
-                    errors.push(targets[ci].name + " [capture]: " + captureErr.toString());
-                }
+                debug.log("Created overlay precomp: " + overlayTarget.overlayLayerName);
             }
 
             for (ci = 0; ci < captured.length; ci++) {
@@ -138,16 +168,18 @@
                         entry.color,
                         entry.suffix,
                         overlayTarget.sourceCompName,
-                        overlayTarget.overlayLayerName
+                        overlayTarget.overlayLayerName,
+                        options
                     );
                     if (boxLayer) {
                         bboxLayerCount++;
                         if (!BBOX_IN_PRECOMP) {
                             createdLayers.push(boxLayer);
                         }
+                        debug.log("Created bbox: " + boxLayer.name);
                     }
 
-                    if (GENERATE_TRAJECTORY && entry.info.motionPath.vertices.length >= 2) {
+                    if (options.generateTrajectory && entry.info.motionPath.vertices.length >= 2) {
                         var trajLayer = createTrajectory(
                             overlayTarget.comp,
                             entry.info,
@@ -159,6 +191,7 @@
                             if (!BBOX_IN_PRECOMP) {
                                 createdLayers.push(trajLayer);
                             }
+                            debug.log("Created trajectory: " + trajLayer.name);
                         }
                     }
                 } catch (layerErr) {
@@ -187,16 +220,167 @@
                 "Skipped: " + skipped + "\n\n" +
                 "Not processed: " + (stats.total - targets.length) + " layers\n" +
                 "  — disabled: " + stats.disabled + "\n" +
-                "  — audio/adjustment: " + stats.noVideo + "\n" +
+                "  — audio only / no video: " + stats.noVideo + "\n" +
+                "  — adjustment: " + stats.adjustment + "\n" +
                 "  — camera/light/guide: " + stats.notAV + "\n" +
-                "  — generated BBox: " + stats.guideOrGenerated +
+                "  — generated BBox: " + stats.guideOrGenerated + "\n" +
+                "  — not selected: " + stats.notSelected + "\n" +
+                "  — type filter: " + stats.typeFiltered +
+                "\n\nOptions:\n" +
+                "  — layer mode: " + options.layerMode + "\n" +
+                "  — trajectories: " + (options.generateTrajectory ? "on" : "off") +
                 (errors.length > 0 ? "\n\nErrors (" + errors.length + "):\n" + errors.slice(0, 5).join("\n") : "")
             );
+
+            debug.flush(errors);
         } catch (e) {
             alert("Error: " + e.toString() + (e.line ? " (line " + e.line + ")" : ""));
+            debug.log("Fatal: " + e.toString() + (e.line ? " (line " + e.line + ")" : ""));
+            debug.flush([e.toString()]);
         }
 
         app.endUndoGroup();
+    }
+
+    function mergeOptions(base, override) {
+        for (var key in override) {
+            if (override.hasOwnProperty(key)) {
+                base[key] = override[key];
+            }
+        }
+        return base;
+    }
+
+    function createDebugLog(enabled) {
+        var lines = [];
+        return {
+            log: function (message) {
+                if (!enabled) {
+                    return;
+                }
+                var line = "[BBox] " + message;
+                lines.push(line);
+                try {
+                    $.writeln(line);
+                } catch (e) {}
+            },
+            flush: function (errors) {
+                if (!enabled) {
+                    return;
+                }
+                var report = lines.join("\n");
+                if (errors && errors.length > 0) {
+                    report += "\n\nErrors:\n" + errors.join("\n");
+                }
+                if (report.length === 0) {
+                    report = "[BBox] No debug events.";
+                }
+                alert("BBox Debug Report\n\n" + report.slice(0, 3000));
+            }
+        };
+    }
+
+    // ─── UI ─────────────────────────────────────────────────────────────────
+    function isScriptUIPanel(thisObj) {
+        try {
+            return typeof Panel !== "undefined" && thisObj instanceof Panel;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function buildUI(thisObj) {
+        var win = isScriptUIPanel(thisObj)
+            ? thisObj
+            : new Window("palette", "Bounding Boxes", undefined, { resizeable: true });
+
+        win.orientation = "column";
+        win.alignChildren = ["fill", "top"];
+        win.spacing = 8;
+        win.margins = 12;
+
+        var modePanel = win.add("panel", undefined, "Layers");
+        modePanel.orientation = "column";
+        modePanel.alignChildren = ["fill", "top"];
+        modePanel.margins = 10;
+
+        var layerMode = modePanel.add("dropdownlist", undefined, [
+            "All eligible layers",
+            "Selected layers only"
+        ]);
+        layerMode.selection = DEFAULT_LAYER_MODE === "selected" ? 1 : 0;
+
+        var typesGroup = modePanel.add("group");
+        typesGroup.orientation = "column";
+        typesGroup.alignChildren = ["left", "top"];
+        var textCheck = typesGroup.add("checkbox", undefined, "Text");
+        var shapeCheck = typesGroup.add("checkbox", undefined, "Shape");
+        var footageCheck = typesGroup.add("checkbox", undefined, "Footage");
+        var precompCheck = typesGroup.add("checkbox", undefined, "Precomp");
+        var nullCheck = typesGroup.add("checkbox", undefined, "Null");
+        textCheck.value = INCLUDE_TEXT;
+        shapeCheck.value = INCLUDE_SHAPE;
+        footageCheck.value = INCLUDE_FOOTAGE;
+        precompCheck.value = INCLUDE_PRECOMP;
+        nullCheck.value = INCLUDE_NULL;
+
+        var optionsPanel = win.add("panel", undefined, "Overlay");
+        optionsPanel.orientation = "column";
+        optionsPanel.alignChildren = ["left", "top"];
+        optionsPanel.margins = 10;
+
+        var trajectoriesCheck = optionsPanel.add("checkbox", undefined, "Show trajectories");
+        var handlesCheck = optionsPanel.add("checkbox", undefined, "Show handles");
+        var labelColorsCheck = optionsPanel.add("checkbox", undefined, "Use label colors");
+        var debugCheck = optionsPanel.add("checkbox", undefined, "Debug report");
+        trajectoriesCheck.value = GENERATE_TRAJECTORY;
+        handlesCheck.value = SHOW_HANDLES;
+        labelColorsCheck.value = USE_LABEL_COLORS;
+        debugCheck.value = DEBUG_MODE;
+
+        var actions = win.add("group");
+        actions.orientation = "row";
+        actions.alignChildren = ["right", "center"];
+        var generateBtn = actions.add("button", undefined, "Generate");
+        var closeBtn = actions.add("button", undefined, "Close");
+
+        generateBtn.onClick = function () {
+            main({
+                layerMode: layerMode.selection && layerMode.selection.index === 1 ? "selected" : "all",
+                generateTrajectory: trajectoriesCheck.value,
+                useLabelColors: labelColorsCheck.value,
+                showHandles: handlesCheck.value,
+                debugMode: debugCheck.value,
+                includeText: textCheck.value,
+                includeShape: shapeCheck.value,
+                includeFootage: footageCheck.value,
+                includePrecomp: precompCheck.value,
+                includeNull: nullCheck.value
+            });
+        };
+
+        closeBtn.onClick = function () {
+            if (win instanceof Window) {
+                win.close();
+            }
+        };
+
+        win.onResizing = win.onResize = function () {
+            this.layout.resize();
+        };
+
+        return win;
+    }
+
+    function showUI(thisObj) {
+        var win = buildUI(thisObj);
+        if (win instanceof Window) {
+            win.center();
+            win.show();
+        } else {
+            win.layout.layout(true);
+            win.layout.resize();
+        }
     }
 
     // ─── Filtering and cleanup ───────────────────────────────────────────────
@@ -257,6 +441,57 @@
         }
     }
 
+    function isAdjustmentLayer(layer) {
+        try {
+            return layer.adjustmentLayer === true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function isPrecompLayer(layer) {
+        try {
+            return layer.source instanceof CompItem;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function isFootageLayer(layer) {
+        try {
+            return layer.source instanceof FootageItem;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function isLayerSelected(layer) {
+        try {
+            return layer.selected === true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function layerMatchesTypeOptions(layer, options) {
+        if (isNullLayer(layer)) {
+            return options.includeNull;
+        }
+        if (isTextLayer(layer)) {
+            return options.includeText;
+        }
+        if (isShapeLayer(layer)) {
+            return options.includeShape;
+        }
+        if (isPrecompLayer(layer)) {
+            return options.includePrecomp;
+        }
+        if (isFootageLayer(layer)) {
+            return options.includeFootage;
+        }
+        return options.includeFootage;
+    }
+
     function isCameraOrLight(layer) {
         try {
             if (typeof CameraLayer !== "undefined" && layer instanceof CameraLayer) {
@@ -286,14 +521,17 @@
         }
     }
 
-    function collectTargetLayers(comp) {
+    function collectTargetLayers(comp, options, debug) {
         var result = [];
         var stats = {
             total: comp.numLayers,
             disabled: 0,
             noVideo: 0,
             notAV: 0,
-            guideOrGenerated: 0
+            guideOrGenerated: 0,
+            adjustment: 0,
+            typeFiltered: 0,
+            notSelected: 0
         };
 
         for (var i = 1; i <= comp.numLayers; i++) {
@@ -308,25 +546,45 @@
             }
             if (!layer.enabled) {
                 stats.disabled++;
+                debug.log("Skipped disabled layer #" + i + ": " + layer.name);
                 continue;
             }
             if (layer.guideLayer) {
                 stats.guideOrGenerated++;
+                debug.log("Skipped guide layer #" + i + ": " + layer.name);
                 continue;
             }
             if (isCameraOrLight(layer)) {
                 stats.notAV++;
+                debug.log("Skipped camera/light #" + i + ": " + layer.name);
+                continue;
+            }
+            if (isAdjustmentLayer(layer)) {
+                stats.adjustment++;
+                debug.log("Skipped adjustment layer #" + i + ": " + layer.name);
                 continue;
             }
             if (isAudioOnly(layer)) {
                 stats.noVideo++;
+                debug.log("Skipped audio-only layer #" + i + ": " + layer.name);
+                continue;
+            }
+            if (options.layerMode === "selected" && !isLayerSelected(layer)) {
+                stats.notSelected++;
+                continue;
+            }
+            if (!layerMatchesTypeOptions(layer, options)) {
+                stats.typeFiltered++;
+                debug.log("Skipped by type filter #" + i + ": " + layer.name);
                 continue;
             }
 
             result.push({
                 index: i,
-                name: layer.name
+                name: layer.name,
+                layer: layer
             });
+            debug.log("Accepted layer #" + i + ": " + layer.name);
         }
 
         return { targets: result, stats: stats };
@@ -415,9 +673,9 @@
     }
 
     // ─── Colors ──────────────────────────────────────────────────────────────
-    function captureSourceLayerInfo(sourceLayer, comp) {
+    function captureSourceLayerInfo(sourceLayer, comp, options) {
         var motionPath = { vertices: [], inTangents: [], outTangents: [], keyframePoints: [] };
-        if (GENERATE_TRAJECTORY) {
+        if (options.generateTrajectory) {
             try {
                 motionPath = collectMotionPathData(sourceLayer);
             } catch (e) {
@@ -465,8 +723,8 @@
         } catch (e) {}
     }
 
-    function colorForLayer(layer) {
-        if (!USE_LABEL_COLORS) {
+    function colorForLayer(layer, options) {
+        if (!options.useLabelColors) {
             return FALLBACK_COLOR;
         }
         var idx = layer.label;
@@ -477,18 +735,20 @@
     }
 
     // ─── Bounding Box (live, expression) ─────────────────────────────────────
-    function createBoundingBox(comp, info, color, uniqueSuffix, sourceCompName, overlayLayerName) {
+    function createBoundingBox(comp, info, color, uniqueSuffix, sourceCompName, overlayLayerName, options) {
         var layerName = BOX_PREFIX + info.name + uniqueSuffix;
-        var setup = createBBoxShapeLayer(comp, layerName, info.label, color);
+        var setup = createBBoxShapeLayer(comp, layerName, info.label, color, options);
 
         var expressions = buildBBoxExpressions(info.name, sourceCompName, overlayLayerName);
         for (var oi = 0; oi < expressions.length; oi++) {
             setPathExpression(setup.outlinePaths[oi], expressions[oi]);
         }
 
-        var handleExpressions = buildHandleExpressions(info.name, sourceCompName, overlayLayerName);
-        for (var hi = 0; hi < handleExpressions.length; hi++) {
-            setPathExpression(setup.handlePaths[hi], handleExpressions[hi]);
+        if (options.showHandles) {
+            var handleExpressions = buildHandleExpressions(info.name, sourceCompName, overlayLayerName);
+            for (var hi = 0; hi < handleExpressions.length; hi++) {
+                setPathExpression(setup.handlePaths[hi], handleExpressions[hi]);
+            }
         }
 
         applyLayerTiming(setup.layer, info);
@@ -880,7 +1140,7 @@
         fill.property("ADBE Vector Fill Opacity").setValue(0);
     }
 
-    function createBBoxShapeLayer(comp, layerName, label, color) {
+    function createBBoxShapeLayer(comp, layerName, label, color, options) {
         var shapeLayer = comp.layers.addShape();
         shapeLayer.name = layerName;
         shapeLayer.label = label;
@@ -893,17 +1153,21 @@
         addPathsToGroup(outlineContents, 4);
         addStrokeToGroup(outlineContents, color, BBOX_STROKE_WIDTH);
 
-        var handlesGroup = root.addProperty("ADBE Vector Group");
-        var handlesContents = handlesGroup.property("ADBE Vectors Group");
-        addPathsToGroup(handlesContents, 8);
-        addStrokeToGroup(handlesContents, color, BBOX_STROKE_WIDTH);
+        var handlePaths = [];
+        if (options.showHandles) {
+            var handlesGroup = root.addProperty("ADBE Vector Group");
+            var handlesContents = handlesGroup.property("ADBE Vectors Group");
+            addPathsToGroup(handlesContents, 8);
+            addStrokeToGroup(handlesContents, color, BBOX_STROKE_WIDTH);
+            handlePaths = getFreshPathsInGroup(shapeLayer, 2, 8);
+        }
 
         zeroTransform(shapeLayer);
 
         return {
             layer: shapeLayer,
             outlinePaths: getFreshPathsInGroup(shapeLayer, 1, 4),
-            handlePaths: getFreshPathsInGroup(shapeLayer, 2, 8)
+            handlePaths: handlePaths
         };
     }
 
@@ -1036,5 +1300,5 @@
             .replace(/\n/g, "\\n");
     }
 
-    main();
-})();
+    showUI(thisObj);
+})(this);

@@ -50,9 +50,12 @@ All overlays are grouped into a single **BBox Overlay** precomp inside the activ
 2. Run the script:
    - **File → Scripts → Run Script File…** — if the file is not in the Scripts folder
    - **File → Scripts → boundingBoxes** — if installed in the Scripts folder
-3. The script removes old generated layers, builds new overlays, and shows a summary dialog.
+3. Choose the overlay settings in the **Bounding Boxes** panel.
+4. Click **Generate**. The script removes old generated layers, builds new overlays, and shows a summary dialog.
 
 Re-run the script whenever you need to refresh overlays after editing layer animation or bounds.
+
+For a dockable panel workflow, place `boundingBoxes.jsx` in the After Effects `ScriptUI Panels` folder and open it from the **Window** menu.
 
 ## Configuration
 
@@ -65,11 +68,23 @@ Edit the constants at the top of `boundingBoxes.jsx`:
 | `BBOX_IN_PRECOMP` | `true` | Place overlays in a dedicated precomp |
 | `GENERATE_TRAJECTORY` | `true` | Generate motion path overlays |
 | `USE_LABEL_COLORS` | `true` | Match overlay color to layer label |
+| `SHOW_HANDLES` | `true` | Show corner and edge handles on bounding boxes |
+| `DEBUG_MODE` | `false` | Print debug events to the JavaScript console and show a debug report |
+| `DEFAULT_LAYER_MODE` | `all` | Default UI layer mode: `all` or `selected` |
 | `FALLBACK_COLOR` | red | Color when label colors are disabled |
 | `CROSS_HALF_SIZE` | `10` | Half length of the center cross arm (px) |
 | `HANDLE_HALF_SIZE` | `4` | Half side length of bbox handle squares (px) |
 | `TRAJ_KEYFRAME_SQUARE_HALF` | `4` | Half side length of keyframe markers (px) |
 | `GROUP_UNDER_NULL` | `false` | Parent all generated layers under a null |
+
+## Panel options
+
+- **All eligible layers / Selected layers only** — choose whether to scan the whole composition or only selected layers
+- **Layer type filters** — include or exclude Text, Shape, Footage, Precomp, and Null layers
+- **Show trajectories** — bake Position keyframe paths into shape layers
+- **Show handles** — draw corner and edge handles around each bounding box
+- **Use label colors** — match overlay strokes to AE label colors
+- **Debug report** — show the accepted/skipped layer log after generation
 
 ## Limitations
 
