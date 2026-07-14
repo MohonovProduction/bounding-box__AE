@@ -40,6 +40,7 @@
     var INCLUDE_FOOTAGE = true;
     var INCLUDE_PRECOMP = true;
     var INCLUDE_NULL = true;
+    var SOURCE_RECT_INCLUDE_EXTENTS = true;
     var FALLBACK_COLOR = [1, 0.2, 0.2]; // red, visible on any background
     var NULL_DEFAULT_LEFT = -50;
     var NULL_DEFAULT_TOP = -50;
@@ -813,17 +814,20 @@
         };
 
         return layerRefSnippet(safeName, sourceCompName, overlayLayerName).concat([
-            "var r = L.sourceRectAtTime(time, false);",
+            "function bboxToComp(x, y) {",
+            "    return L.threeDLayer ? L.toComp([x, y, 0]) : L.toComp([x, y]);",
+            "}",
+            "var r = L.sourceRectAtTime(time, " + (SOURCE_RECT_INCLUDE_EXTENTS ? "true" : "false") + ");",
             "var ok = r.width > 0 && r.height > 0;",
             "if (!ok && L.nullLayer) {",
             "    r = { left: " + NULL_DEFAULT_LEFT + ", top: " + NULL_DEFAULT_TOP +
                 ", width: " + NULL_DEFAULT_WIDTH + ", height: " + NULL_DEFAULT_HEIGHT + " };",
             "    ok = true;",
             "}",
-            "var tl = ok ? " + toLocal("L.toComp([r.left, r.top])") + " : [0, 0];",
-            "var tr = ok ? " + toLocal("L.toComp([r.left + r.width, r.top])") + " : [0, 0];",
-            "var br = ok ? " + toLocal("L.toComp([r.left + r.width, r.top + r.height])") + " : [0, 0];",
-            "var bl = ok ? " + toLocal("L.toComp([r.left, r.top + r.height])") + " : [0, 0];"
+            "var tl = ok ? " + toLocal("bboxToComp(r.left, r.top)") + " : [0, 0];",
+            "var tr = ok ? " + toLocal("bboxToComp(r.left + r.width, r.top)") + " : [0, 0];",
+            "var br = ok ? " + toLocal("bboxToComp(r.left + r.width, r.top + r.height)") + " : [0, 0];",
+            "var bl = ok ? " + toLocal("bboxToComp(r.left, r.top + r.height)") + " : [0, 0];"
         ]);
     }
 
@@ -1236,7 +1240,7 @@
     function layerAnchorToComp(layer, time) {
         try {
             var anchor = layer.property("ADBE Transform Group").property("ADBE Anchor Point").valueAtTime(time, false);
-            var point = [anchor[0], anchor[1]];
+            var point = layer.threeDLayer ? [anchor[0], anchor[1], anchor[2] || 0] : [anchor[0], anchor[1]];
             if (typeof layer.toComp === "function") {
                 return layer.toComp(point, time);
             }

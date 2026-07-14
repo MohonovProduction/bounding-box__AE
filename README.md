@@ -71,6 +71,7 @@ Edit the constants at the top of `boundingBoxes.jsx`:
 | `SHOW_HANDLES` | `true` | Show corner and edge handles on bounding boxes |
 | `DEBUG_MODE` | `false` | Print debug events to the JavaScript console and show a debug report |
 | `DEFAULT_LAYER_MODE` | `all` | Default UI layer mode: `all` or `selected` |
+| `SOURCE_RECT_INCLUDE_EXTENTS` | `true` | Use source rect extents for shape/text bounds |
 | `FALLBACK_COLOR` | red | Color when label colors are disabled |
 | `CROSS_HALF_SIZE` | `10` | Half length of the center cross arm (px) |
 | `HANDLE_HALF_SIZE` | `4` | Half side length of bbox handle squares (px) |
@@ -90,7 +91,7 @@ Edit the constants at the top of `boundingBoxes.jsx`:
 ## Limitations
 
 - Processes **top-level layers only** — layers inside precomps are not processed
-- **3D layers** are projected to 2D via the active camera (`toComp`)
+- **3D layers** are projected to 2D via the active camera (`toComp`). Regular 3D layers use `[x, y, 0]` layer-space points; imported 3D/model layers may still expose incomplete `sourceRectAtTime` bounds through AE scripting.
 - Motion paths are **baked once** — re-run the script after editing Position animation
 - Duplicate layer names: expressions reference the **topmost** layer with that name
 
