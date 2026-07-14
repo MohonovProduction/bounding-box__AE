@@ -85,6 +85,7 @@ Edit the constants at the top of `boundingBoxes.jsx`:
 - **Show handles** — draw corner and edge handles around each bounding box
 - **Use label colors** — match overlay strokes to AE label colors
 - **Debug report** — show the accepted/skipped layer log after generation
+- **Author** — quick links to [Telegram](https://t.me/mohonovschannel) and [GitHub](https://github.com/MohonovProduction/bounding-box__AE)
 
 ## Limitations
 

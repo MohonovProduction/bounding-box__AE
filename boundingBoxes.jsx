@@ -289,6 +289,17 @@
         }
     }
 
+    function openUrl(url) {
+        try {
+            var command = $.os.toLowerCase().indexOf("windows") >= 0
+                ? 'cmd /c start "" "' + url + '"'
+                : 'open "' + url + '"';
+            system.callSystem(command);
+        } catch (e) {
+            alert(url);
+        }
+    }
+
     function buildUI(thisObj) {
         var win = isScriptUIPanel(thisObj)
             ? thisObj
@@ -344,6 +355,18 @@
         var generateBtn = actions.add("button", undefined, "Generate");
         var closeBtn = actions.add("button", undefined, "Close");
 
+        var authorPanel = win.add("panel", undefined, "Author");
+        authorPanel.orientation = "column";
+        authorPanel.alignChildren = ["fill", "top"];
+        authorPanel.margins = 10;
+
+        authorPanel.add("statictext", undefined, "Michael Mohonov");
+        var authorLinks = authorPanel.add("group");
+        authorLinks.orientation = "row";
+        authorLinks.alignChildren = ["left", "center"];
+        var telegramBtn = authorLinks.add("button", undefined, "Telegram");
+        var githubBtn = authorLinks.add("button", undefined, "GitHub");
+
         generateBtn.onClick = function () {
             main({
                 layerMode: layerMode.selection && layerMode.selection.index === 1 ? "selected" : "all",
@@ -363,6 +386,14 @@
             if (win instanceof Window) {
                 win.close();
             }
+        };
+
+        telegramBtn.onClick = function () {
+            openUrl("https://t.me/mohonovschannel");
+        };
+
+        githubBtn.onClick = function () {
+            openUrl("https://github.com/MohonovProduction/bounding-box__AE");
         };
 
         win.onResizing = win.onResize = function () {
